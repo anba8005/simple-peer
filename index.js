@@ -1,12 +1,22 @@
 var debug = require('debug')('simple-peer')
 var getBrowserRTC = require('get-browser-rtc')
-var randombytes = require('randombytes')
 var stream = require('readable-stream')
 var queueMicrotask = require('queue-microtask') // TODO: remove when Node 10 is not supported
 
 var MAX_BUFFERED_AMOUNT = 64 * 1024
 var ICECOMPLETE_TIMEOUT = 5 * 1000
 var CHANNEL_CLOSING_TIMEOUT = 5 * 1000
+
+var randombytes = function(length) {
+  var result = '';
+  var characters =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  var charactersLength = characters.length;
+  for (var i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * charactersLength));
+  }
+  return result;
+}
 
 // HACK: Filter trickle lines when trickle is disabled #354
 function filterTrickle (sdp) {
@@ -142,9 +152,23 @@ class Peer extends stream.Duplex {
       this.streams.forEach(stream => {
         this.addStream(stream)
       })
-    }
+	}
+	
     this._pc.ontrack = event => {
-      this._onTrack(event)
+	  if ('ontrack' in this._pc) {
+		this._pc.ontrack = (event) => {
+		  this._onTrack(event)
+		}
+	  } else if ('onaddstream' in this._pc) {
+		this._pc.onaddstream = (event) => {
+		  event.stream.getTracks().forEach((eventTrack) => {
+			this._onTrack({
+			  streams: [ event.stream ],
+			  track: eventTrack
+			})
+		  })
+		}
+	  }
     }
 
     if (this.initiator) {
@@ -283,7 +307,16 @@ class Peer extends stream.Duplex {
     var submap = this._senderMap.get(track) || new Map() // nested Maps map [track, stream] to sender
     var sender = submap.get(stream)
     if (!sender) {
-      sender = this._pc.addTrack(track, stream)
+	  if ('addTrack' in this._pc) {
+		sender = this._pc.addTrack(track, stream)
+	  } else if ('addStream' in this._pc) {
+		this._pc.addStream(stream)
+		sender = {
+		  id: randombytes(10),
+		};
+	  } else {
+		this.destroy(makeError('Cannot addStream without webRTC support for addTrack or addStream.','ERR_NO_ADDTRACK_OR_ADDSTREAM'))
+	  }
       submap.set(stream, sender)
       this._senderMap.set(track, submap)
       this._needsNegotiation()
@@ -332,7 +365,13 @@ class Peer extends stream.Duplex {
     }
     try {
       sender.removed = true
-      this._pc.removeTrack(sender)
+      if ('removeTrack' in this._pc) {
+		this._pc.removeTrack(sender)
+	  } else if ('removeStream' in this._pc) {
+		this._pc.removeStream(stream)
+	  } else {
+		this.destroy(makeError('Cannot addStream without webRTC support for addTrack or addStream.','ERR_NO_ADDTRACK_OR_ADDSTREAM'))
+	  }
     } catch (err) {
       if (err.name === 'NS_ERROR_UNEXPECTED') {
         this._sendersAwaitingStable.push(sender) // HACK: Firefox must wait until (signalingState === stable) https://bugzilla.mozilla.org/show_bug.cgi?id=1133874
@@ -681,7 +720,7 @@ class Peer extends stream.Duplex {
     }
 
     // Promise-based getStats() (standard)
-    if (this._pc.getStats.length === 0) {
+    if (this._pc.getStats.length === 0 || this._isReactNativeWebrtc) {
       this._pc.getStats()
         .then(res => {
           var reports = []
@@ -692,16 +731,6 @@ class Peer extends stream.Duplex {
         }, err => cb(err))
 
     // Two-parameter callback-based getStats() (deprecated, former standard)
-    } else if (this._isReactNativeWebrtc) {
-      this._pc.getStats(null, res => {
-        var reports = []
-        res.forEach(report => {
-          reports.push(flattenValues(report))
-        })
-        cb(null, reports)
-      }, err => cb(err))
-
-    // Single-parameter callback-based getStats() (non-standard)
     } else if (this._pc.getStats.length > 0) {
       this._pc.getStats(res => {
         // If we destroy connection in `connect` callback this code might happen to run when actual connection is already closed

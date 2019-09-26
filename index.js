@@ -154,21 +154,19 @@ class Peer extends stream.Duplex {
       })
 	}
 	
-    this._pc.ontrack = event => {
-	  if ('ontrack' in this._pc) {
-		this._pc.ontrack = (event) => {
-		  this._onTrack(event)
-		}
-	  } else if ('onaddstream' in this._pc) {
-		this._pc.onaddstream = (event) => {
-		  event.stream.getTracks().forEach((eventTrack) => {
-			this._onTrack({
-			  streams: [ event.stream ],
-			  track: eventTrack
-			})
-		  })
-		}
+	if ('ontrack' in this._pc) {
+	  this._pc.ontrack = event => {
+	    this._onTrack(event)
 	  }
+	} else if ('onaddstream' in this._pc) {
+	  this._pc.onaddstream = event => {
+	    event.stream.getTracks().forEach((eventTrack) => {
+		  this._onTrack({
+		    streams: [ event.stream ],
+		    track: eventTrack
+	      })
+	    })
+      }
     }
 
     if (this.initiator) {
@@ -272,7 +270,9 @@ class Peer extends stream.Duplex {
 
     if (this.initiator) {
       try {
-        this._pc.addTransceiver(kind, init)
+		if (this._pc.addTransceiver) {
+		  this._pc.addTransceiver(kind, init)
+		}
         this._needsNegotiation()
       } catch (err) {
         this.destroy(makeError(err, 'ERR_ADD_TRANSCEIVER'))

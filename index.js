@@ -1,6 +1,6 @@
 var debug = require('debug')('simple-peer')
+var events = require('events')
 var getBrowserRTC = require('get-browser-rtc')
-var stream = require('readable-stream')
 var queueMicrotask = require('queue-microtask') // TODO: remove when Node 10 is not supported
 
 var MAX_BUFFERED_AMOUNT = 64 * 1024
@@ -38,7 +38,7 @@ function warn (message) {
  * Duplex stream.
  * @param {Object} opts
  */
-class Peer extends stream.Duplex {
+class Peer extends events.EventEmitter {
   constructor (opts) {
     opts = Object.assign({
       allowHalfOpen: false
@@ -441,8 +441,6 @@ class Peer extends stream.Duplex {
 
     this.readable = this.writable = false
 
-    if (!this._readableState.ended) this.push(null)
-    if (!this._writableState.finished) this.end()
 
     this.destroyed = true
     this._connected = false
@@ -953,8 +951,7 @@ class Peer extends stream.Duplex {
   _onChannelMessage (event) {
     if (this.destroyed) return
     var data = event.data
-    if (data instanceof ArrayBuffer) data = Buffer.from(data)
-    this.push(data)
+	this.emit('data',data);
   }
 
   _onChannelBufferedAmountLow () {
